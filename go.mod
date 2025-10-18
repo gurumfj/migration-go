@@ -1,4 +1,4 @@
-module migration-go
+module github.com/gurumfj/migration-go
 
 go 1.25.2
 

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log"
 
-	migration "migration-go"
+	migration "github.com/gurumfj/migration-go"
 
 	_ "github.com/mattn/go-sqlite3"
 )
