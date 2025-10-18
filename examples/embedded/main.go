@@ -19,7 +19,7 @@ func main() {
 	log.Println("🚀 Starting application with embedded migrations...")
 
 	// Open database connection
-	db, err := sql.Open("sqlite3", "./myapp.db")
+	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}

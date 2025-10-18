@@ -156,7 +156,7 @@ func filesystemMigrations() {
 	defer db.Close()
 
 	// Create a migrator that reads from filesystem
-	migrator := migration.NewMigratorFromDir("./migrations")
+	migrator := migration.NewMigratorFromDir("./examples/basic/migrations")
 
 	// Run migrations
 	result, err := migrator.Run(db)
