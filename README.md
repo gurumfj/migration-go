@@ -17,7 +17,7 @@ A flexible, easy-to-use database migration library for Go applications. This lib
 ## Installation
 
 ```bash
-go get migration-go
+go get github.com/gurumfj/migration-go
 ```
 
 ## Quick Start
@@ -29,7 +29,7 @@ import (
     "database/sql"
     "log"
     
-    migration "migration-go"
+    migration "github.com/gurumfj/migration-go"
     _ "github.com/mattn/go-sqlite3"
 )
 
@@ -79,7 +79,7 @@ import (
     "embed"
     "log"
     
-    migration "migration-go"
+    migration "github.com/gurumfj/migration-go"
     _ "github.com/mattn/go-sqlite3"
 )
 
@@ -118,7 +118,7 @@ import (
     "database/sql"
     "log"
     
-    migration "migration-go"
+    migration "github.com/gurumfj/migration-go"
     _ "github.com/mattn/go-sqlite3"
 )
 
@@ -147,7 +147,7 @@ For advanced use cases, implement the `MigrationSource` interface:
 package main
 
 import (
-    migration "migration-go"
+    migration "github.com/gurumfj/migration-go"
 )
 
 // CustomSource loads migrations from your custom location
