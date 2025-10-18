@@ -7,11 +7,12 @@ A flexible, easy-to-use database migration library for Go applications. This lib
 - 📦 **Embedded Migrations**: Embed SQL files directly into your binary using Go's `embed` package
 - 📁 **Filesystem Migrations**: Load migrations from a directory at runtime
 - 🔌 **Extensible**: Implement custom migration sources for advanced use cases
-- 📊 **Migration Tracking**: Automatic tracking of applied migrations
+- 📊 **Automatic Migration Tracking**: Tracking table is automatically created - no manual setup required
 - 🔄 **Transaction Support**: Each migration runs in a transaction for safety
 - 🎯 **Simple API**: Clean, intuitive API with sensible defaults
 - ✅ **Status Checking**: Query current version and pending migrations
-- 🔧 **Options**: Dry-run mode, verbose logging, custom context support
+- 🔧 **Flexible Options**: Dry-run mode, verbose logging, custom context, custom table names
+- 🏷️ **Custom Table Names**: Use custom table names for tracking migrations to avoid conflicts
 
 ## Installation
 
@@ -259,6 +260,9 @@ migration.WithVerbose()
 
 // Custom context
 migration.WithContext(ctx)
+
+// Custom table name for tracking migrations (default: "schema_migrations")
+migration.WithTableName("custom_migrations")
 ```
 
 **Example:**
@@ -266,6 +270,12 @@ migration.WithContext(ctx)
 result, err := migrator.Run(db, 
     migration.WithVerbose(),
     migration.WithContext(ctx),
+)
+
+// Using custom table name
+result, err := migrator.Run(db, 
+    migration.WithTableName("my_migrations"),
+    migration.WithVerbose(),
 )
 ```
 
@@ -397,15 +407,46 @@ func migrateMultipleDatabases() {
 }
 ```
 
+### Using Custom Table Names
+
+```go
+func migrateWithCustomTable(db *sql.DB) {
+    migrator := migration.NewMigratorFromFS(migrations, "migrations")
+    
+    // Use a custom table name to avoid conflicts
+    customTable := "app_migrations"
+    
+    // Run migrations with custom table
+    result, err := migrator.Run(db, 
+        migration.WithTableName(customTable),
+        migration.WithVerbose(),
+    )
+    if err != nil {
+        log.Fatalf("Migration failed: %v", err)
+    }
+    
+    log.Printf("Applied %d migrations to %s table", result.Applied, customTable)
+    
+    // Check status with same custom table
+    status, err := migrator.Status(db, migration.WithTableName(customTable))
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("Current version: %s", status.CurrentVersion)
+}
+```
+
 ## Migration Strategy
 
 The library uses a simple, linear migration strategy:
 
 1. **Sequential IDs**: Migrations are numbered sequentially (000, 001, 002, ...)
-2. **Baseline Migration (000)**: Creates the `schema_migrations` table using `IF NOT EXISTS`
+2. **Automatic Tracking Table**: The `schema_migrations` table is automatically created by the library - you don't need to create it manually
 3. **Incremental Changes**: Each subsequent migration builds on the previous state
 4. **Transaction Safety**: Each migration runs in its own transaction
 5. **Idempotent**: Safe to run multiple times (already-applied migrations are skipped)
+6. **Custom Table Names**: You can use a custom table name for tracking migrations via `WithTableName()` option
 
 ## Database Support
 
@@ -449,10 +490,10 @@ If a migration fails:
 
 ### Schema Migrations Table
 
-The library creates a `schema_migrations` table to track applied migrations:
+The library automatically creates a `schema_migrations` table to track applied migrations when you run `migrator.Run()`:
 
 ```sql
-CREATE TABLE schema_migrations (
+CREATE TABLE IF NOT EXISTS schema_migrations (
     id TEXT PRIMARY KEY,
     description TEXT NOT NULL,
     applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -463,6 +504,22 @@ You can query this table directly to see migration history:
 
 ```sql
 SELECT * FROM schema_migrations ORDER BY id;
+```
+
+**Using a Custom Table Name:**
+
+If you need to use a different table name (e.g., to avoid conflicts with existing tables), use the `WithTableName()` option:
+
+```go
+// Use a custom table name for tracking migrations
+migrator := migration.NewMigratorFromFS(migrations, "migrations")
+result, err := migrator.Run(db, migration.WithTableName("my_app_migrations"))
+
+// Query the custom table
+db.Query("SELECT * FROM my_app_migrations ORDER BY id")
+
+// Get version from custom table
+version, err := migration.GetCurrentVersionWithTable(db, "my_app_migrations")
 ```
 
 ## Examples

@@ -161,7 +161,13 @@ func TestGetCurrentVersion(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Before any migrations, version should be empty
+	// Create the migrations table first (simulating what Run() does)
+	err = ensureMigrationsTable(db, MigrationsTable)
+	if err != nil {
+		t.Fatalf("Failed to create migrations table: %v", err)
+	}
+
+	// Before any migrations are applied, version should be empty
 	version1, err := GetCurrentVersion(db)
 	if err != nil {
 		t.Fatalf("GetCurrentVersion failed: %v", err)
@@ -285,6 +291,69 @@ func TestMigrationSourceInterface(t *testing.T) {
 	err = db.QueryRow("SELECT COUNT(*) FROM test").Scan(&count)
 	if err != nil {
 		t.Errorf("Table 'test' should exist: %v", err)
+	}
+}
+
+// TestWithCustomTableName tests using a custom table name for migrations
+func TestWithCustomTableName(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	customTableName := "custom_migrations"
+	migrator := NewMigratorFromFS(testMigrations, "testdata")
+
+	// Run migrations with custom table name
+	result, err := migrator.Run(db, WithTableName(customTableName))
+	if err != nil {
+		t.Fatalf("Migration failed: %v", err)
+	}
+
+	if result.Applied != 2 {
+		t.Errorf("Expected 2 migrations applied, got %d", result.Applied)
+	}
+
+	// Verify custom table was created and used
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM custom_migrations").Scan(&count)
+	if err != nil {
+		t.Fatalf("Custom migrations table should exist: %v", err)
+	}
+
+	if count != 2 {
+		t.Errorf("Expected 2 records in custom_migrations table, got %d", count)
+	}
+
+	// Verify default table was NOT created
+	err = db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	if err == nil {
+		t.Error("Default schema_migrations table should NOT exist when using custom table name")
+	}
+
+	// Test GetCurrentVersionWithTable
+	version, err := GetCurrentVersionWithTable(db, customTableName)
+	if err != nil {
+		t.Fatalf("Failed to get current version: %v", err)
+	}
+
+	if version != "001" {
+		t.Errorf("Expected version 001, got %s", version)
+	}
+
+	// Test Status with custom table name
+	status, err := migrator.Status(db, WithTableName(customTableName))
+	if err != nil {
+		t.Fatalf("Failed to get status: %v", err)
+	}
+
+	if !status.IsUpToDate {
+		t.Error("Expected database to be up to date")
+	}
+
+	if len(status.AppliedMigrations) != 2 {
+		t.Errorf("Expected 2 applied migrations, got %d", len(status.AppliedMigrations))
 	}
 }
 

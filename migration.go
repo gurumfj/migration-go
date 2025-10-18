@@ -75,9 +75,10 @@ type MigrationStatus struct {
 type Option func(*config)
 
 type config struct {
-	dryRun  bool
-	verbose bool
-	ctx     context.Context
+	dryRun    bool
+	verbose   bool
+	ctx       context.Context
+	tableName string
 }
 
 // WithDryRun enables dry-run mode (doesn't apply migrations)
@@ -98,6 +99,14 @@ func WithVerbose() Option {
 func WithContext(ctx context.Context) Option {
 	return func(c *config) {
 		c.ctx = ctx
+	}
+}
+
+// WithTableName sets a custom table name for tracking migrations
+// Default is "schema_migrations"
+func WithTableName(name string) Option {
+	return func(c *config) {
+		c.tableName = name
 	}
 }
 
@@ -165,10 +174,16 @@ func NewMigratorFromDir(path string) *Migrator {
 // Run executes all pending migrations for this migrator
 func (m *Migrator) Run(db *sql.DB, options ...Option) (*MigrationResult, error) {
 	cfg := &config{
-		ctx: context.Background(),
+		ctx:       context.Background(),
+		tableName: MigrationsTable, // Default table name
 	}
 	for _, opt := range options {
 		opt(cfg)
+	}
+
+	// Ensure migrations table exists
+	if err := ensureMigrationsTable(db, cfg.tableName); err != nil {
+		return nil, err
 	}
 
 	// Get all migrations from source
@@ -177,9 +192,9 @@ func (m *Migrator) Run(db *sql.DB, options ...Option) (*MigrationResult, error) 
 		return nil, fmt.Errorf("failed to read migrations: %w", err)
 	}
 
-	// Get applied migrations (ignore error if table doesn't exist yet)
-	appliedMap, err := getAppliedMigrations(db)
-	if err != nil && !strings.Contains(err.Error(), "no such table") {
+	// Get applied migrations
+	appliedMap, err := getAppliedMigrations(db, cfg.tableName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get applied migrations: %w", err)
 	}
 
@@ -210,7 +225,7 @@ func (m *Migrator) Run(db *sql.DB, options ...Option) (*MigrationResult, error) 
 			continue
 		}
 
-		if err := applyMigration(cfg.ctx, db, migration); err != nil {
+		if err := applyMigration(cfg.ctx, db, migration, cfg.tableName); err != nil {
 			return nil, fmt.Errorf("failed to apply migration %s: %w", migration.ID, err)
 		}
 
@@ -237,16 +252,28 @@ func (m *Migrator) Run(db *sql.DB, options ...Option) (*MigrationResult, error) 
 }
 
 // Status returns the current migration status for this migrator
-func (m *Migrator) Status(db *sql.DB) (*MigrationStatus, error) {
+func (m *Migrator) Status(db *sql.DB, options ...Option) (*MigrationStatus, error) {
+	cfg := &config{
+		tableName: MigrationsTable, // Default table name
+	}
+	for _, opt := range options {
+		opt(cfg)
+	}
+
+	// Ensure migrations table exists
+	if err := ensureMigrationsTable(db, cfg.tableName); err != nil {
+		return nil, err
+	}
+
 	// Get all migrations from source
 	allMigrations, err := m.source.ReadMigrations()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read migrations: %w", err)
 	}
 
-	// Get applied migrations (ignore error if table doesn't exist yet)
-	appliedMap, err := getAppliedMigrations(db)
-	if err != nil && !strings.Contains(err.Error(), "no such table") {
+	// Get applied migrations
+	appliedMap, err := getAppliedMigrations(db, cfg.tableName)
+	if err != nil {
 		return nil, fmt.Errorf("failed to get applied migrations: %w", err)
 	}
 
@@ -264,7 +291,7 @@ func (m *Migrator) Status(db *sql.DB) (*MigrationStatus, error) {
 	}
 
 	// Get current version
-	currentVersion, _ := GetCurrentVersion(db)
+	currentVersion, _ := GetCurrentVersionWithTable(db, cfg.tableName)
 
 	status := &MigrationStatus{
 		CurrentVersion:    currentVersion,
@@ -380,13 +407,31 @@ func readMigrationsFromDir(dirPath string) ([]Migration, error) {
 	return migrations, nil
 }
 
+// ensureMigrationsTable creates the migrations tracking table if it doesn't exist
+func ensureMigrationsTable(db *sql.DB, tableName string) error {
+	query := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			id TEXT PRIMARY KEY,
+			description TEXT NOT NULL,
+			applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`, tableName)
+
+	_, err := db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	return nil
+}
+
 // getAppliedMigrations retrieves the list of already applied migrations
-func getAppliedMigrations(db *sql.DB) (map[string]time.Time, error) {
+func getAppliedMigrations(db *sql.DB, tableName string) (map[string]time.Time, error) {
 	query := fmt.Sprintf(`
 		SELECT id, applied_at
 		FROM %s
 		ORDER BY id
-	`, MigrationsTable)
+	`, tableName)
 
 	rows, err := db.Query(query)
 	if err != nil {
@@ -408,7 +453,7 @@ func getAppliedMigrations(db *sql.DB) (map[string]time.Time, error) {
 }
 
 // applyMigration executes a migration and records it as applied
-func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error {
+func applyMigration(ctx context.Context, db *sql.DB, migration Migration, tableName string) error {
 	// Execute migration in a transaction
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -425,7 +470,7 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 	query := fmt.Sprintf(`
 		INSERT INTO %s (id, description)
 		VALUES (?, ?)
-	`, MigrationsTable)
+	`, tableName)
 
 	if _, err := tx.ExecContext(ctx, query, migration.ID, migration.Description); err != nil {
 		return fmt.Errorf("failed to record migration: %w", err)
@@ -440,21 +485,29 @@ func applyMigration(ctx context.Context, db *sql.DB, migration Migration) error 
 }
 
 // GetCurrentVersion returns the current highest migration ID that has been applied
-// Returns empty string if schema_migrations table doesn't exist or no migrations have been applied
+// using the default migrations table (schema_migrations).
+// Returns empty string if no migrations have been applied yet.
 //
 // Examples:
 //   - Returns "001" if migrations 000 and 001 have been applied
 //   - Returns "" if no migrations have been applied yet
 func GetCurrentVersion(db *sql.DB) (string, error) {
-	query := "SELECT MAX(id) FROM schema_migrations"
+	return GetCurrentVersionWithTable(db, MigrationsTable)
+}
+
+// GetCurrentVersionWithTable returns the current highest migration ID that has been applied
+// from a custom migrations table.
+// Returns empty string if no migrations have been applied yet.
+//
+// Examples:
+//   - Returns "001" if migrations 000 and 001 have been applied
+//   - Returns "" if no migrations have been applied yet
+func GetCurrentVersionWithTable(db *sql.DB, tableName string) (string, error) {
+	query := fmt.Sprintf("SELECT MAX(id) FROM %s", tableName)
 
 	var version sql.NullString
 	err := db.QueryRow(query).Scan(&version)
 	if err != nil {
-		// Handle table not existing (before migration 000 runs)
-		if strings.Contains(err.Error(), "no such table") {
-			return "", nil
-		}
 		return "", err
 	}
 

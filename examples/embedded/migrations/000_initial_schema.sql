@@ -1,12 +1,5 @@
 -- 000_initial_schema.sql
--- Initial database schema with migrations tracking table
-
--- Create schema_migrations table to track applied migrations
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    id TEXT PRIMARY KEY,
-    description TEXT NOT NULL,
-    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+-- Initial database schema
 
 -- Create users table
 CREATE TABLE IF NOT EXISTS users (
